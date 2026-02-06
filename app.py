@@ -14,7 +14,10 @@ st.subheader("ระบบติดตามผล วิเคราะห์ �
 # --- 2. การเชื่อมต่อข้อมูล (Secrets) ---
 # ดึง Credentials จาก Streamlit Secrets
 scope = ["https://www.googleapis.com/auth/spreadsheets"]
-creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
+service_info = dict(st.secrets["gcp_service_account"])
+service_info["private_key"] = service_info["private_key"].replace("\\n", "\n")
+
+creds = Credentials.from_service_account_info(service_info, scopes=scope)
 client = gspread.authorize(creds)
 
 # เชื่อมต่อกับ Google Sheet (เปลี่ยนชื่อให้ตรงกับไฟล์ของคุณ)
