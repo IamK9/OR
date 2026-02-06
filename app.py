@@ -11,7 +11,6 @@ import pytz
 # --- 1. ตั้งค่าหน้าจอ & Premium UI ---
 st.set_page_config(page_title="Smart OR Pro", layout="wide", page_icon="🏥")
 
-# CSS ตกแต่ง
 st.markdown("""
     <style>
     .stApp { background-color: #f0f2f6; }
@@ -19,15 +18,19 @@ st.markdown("""
     .stDataFrame, .stPlotlyChart { background-color: white; border-radius: 15px; padding: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
     div[data-testid="stMetric"] { background-color: white; padding: 15px; border-radius: 12px; border-left: 5px solid #007bff; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
     div[data-testid="stMetricValue"] { font-size: 24px !important; color: #2c3e50; }
-    div[data-testid="stMetricLabel"] { font-size: 14px !important; color: #7f8c8d; }
-    div.stButton > button { border-radius: 8px; border: none; box-shadow: 0 2px 5px rgba(0,0,0,0.1); transition: all 0.3s; }
-    div.stButton > button:hover { transform: translateY(-2px); box-shadow: 0 5px 10px rgba(0,0,0,0.15); }
+    
+    /* ปรับแต่งปุ่มอัดเสียงให้เด่น */
+    div[data-testid="stAudioInput"] {
+        border: 2px solid #007bff;
+        border-radius: 10px;
+        padding: 10px;
+        background-color: #e3f2fd;
+    }
+    
     h1 { color: #2c3e50; font-family: 'Helvetica Neue', sans-serif; }
-    h2, h3 { color: #34495e; }
     </style>
     """, unsafe_allow_html=True)
 
-# ฟังก์ชันเวลาไทย
 def get_thai_time():
     tz = pytz.timezone('Asia/Bangkok')
     return datetime.now(tz).strftime("%H:%M:%S")
@@ -62,9 +65,9 @@ with st.sidebar:
     tz = pytz.timezone('Asia/Bangkok')
     default_case = f"CASE-{datetime.now(tz).strftime('%Y%m%d')}-001"
     
-    st.subheader("📋 Case Info")
+    st.subheader("1. Case Info")
     case_id = st.text_input("Case ID", default_case)
-    doctor_name = st.selectbox("Surgeon", ["นพ.สมชาย (General)", "พญ.วิภา (OB-GYN)", "นพ.มานพ (Ortho)"])
+    doctor_name = st.selectbox("Surgeon", ["ศ.นพ.สมชาย (General)", "รศ.พญ.วิภา (OB-GYN)", "ผศ.นพ.มานพ (Ortho)"])
     procedure = st.text_input("Procedure", "Laparoscopic Appendectomy")
     
     st.markdown("---")
@@ -81,7 +84,7 @@ with st.sidebar:
 col_header1, col_header2 = st.columns([3, 1])
 with col_header1:
     st.title("Smart Operating Room")
-    st.caption(f"Real-time Data Driven & Decision Support System • {datetime.now(tz).strftime('%d %B %Y')}")
+    st.caption("Step-by-Step Intelligent Workflow")
 with col_header2:
     st.metric("Live Time (BKK)", get_thai_time())
 
@@ -97,27 +100,39 @@ if sh:
 
         col1, col2 = st.columns([1.5, 1])
 
-        # === LEFT: CONTROL CENTER ===
+        # === LEFT: ACTION ZONE ===
         with col1:
-            st.subheader("🎮 Control Center")
-            tab1, tab2, tab3 = st.tabs(["🎙️ Voice Command", "🛡️ Safety Count", "⏱️ Workflow Stamp"])
+            st.subheader("2. Action Zone (ปฏิบัติการ)")
+            
+            # ใช้ Tabs แยกงานให้ชัดเจน ไม่ตีกัน
+            tab1, tab2, tab3 = st.tabs(["🗣️ Voice Command", "🛡️ Safety Count", "⏱️ Workflow"])
 
             with tab1:
-                st.info("💡 Tip: พูดชื่อยาหรือวัสดุเพื่อตัดสต็อกทันที")
-                user_input = st.chat_input("Ex. 'ใช้ Propofol 1 amp และ Vicryl 2 เส้น'...")
+                st.info("🎙️ **วิธีใช้:** กดปุ่มไมค์ > พูดรายการของ > กดปุ่ม Stop > **ระบบจะบันทึกเอง**")
                 
-                if user_input:
-                    with st.status("🔄 AI Processing & Inventory Matching..."):
+                # เปลี่ยนจาก Text Input เป็น Audio Input (High Tech!)
+                audio_val = st.audio_input("กดเพื่อเริ่มอัดเสียงสั่งงาน")
+                
+                if audio_val:
+                    with st.status("🎧 AI กำลังฟังเสียงและตัดสต็อก..."):
                         try:
                             inv_list = ", ".join(df_inv['Item_Name'].tolist()) if not df_inv.empty else ""
-                            # ใช้ Triple Quotes เพื่อป้องกัน Error เวลาข้อความยาวเกินบรรทัด
+                            
+                            # ส่งไฟล์เสียงให้ Gemini 2.0 ฟังโดยตรง!
                             prompt_extract = f"""
-                            จากข้อความ: '{user_input}'
-                            สกัด Item และ Qty แมตช์กับรายการในคลังนี้: [{inv_list}]
-                            ตอบ JSON Array เท่านั้น: [{{'Item':'..', 'Qty':..}}]
+                            ฟังเสียงนี้ แล้วสกัดรายการวัสดุ(Item) และจำนวน(Qty)
+                            โดยพยายามแมตช์เสียงกับรายการในคลังนี้: [{inv_list}]
+                            ตอบเป็น JSON Array เท่านั้น: [{{'Item':'..', 'Qty':..}}]
                             """
-                            res = model.generate_content(prompt_extract)
-                            items = json.loads(res.text.strip().replace("```json", "").replace("```", ""))
+                            
+                            # ส่งทั้ง Prompt และ ไฟล์เสียง
+                            response = model.generate_content([
+                                prompt_extract,
+                                {"mime_type": "audio/wav", "data": audio_val.read()}
+                            ])
+                            
+                            # แปลงผลลัพธ์
+                            items = json.loads(response.text.strip().replace("```json", "").replace("```", ""))
                             
                             for item in items:
                                 match = df_inv[df_inv['Item_Name'] == item.get('Item')]
@@ -125,46 +140,54 @@ if sh:
                                     idx = match.index[0] + 2
                                     sheet_inv.update_cell(idx, 4, float(match.iloc[0]['Stock_Qty']) - float(item['Qty']))
                                     cost = float(match.iloc[0]['Price']) * float(item['Qty'])
-                                    sheet_logs.append_row([get_thai_time(), case_id, item['Item'], item['Qty'], match.iloc[0]['Unit'], match.iloc[0]['Category'], cost, "Voice"])
+                                    sheet_logs.append_row([get_thai_time(), case_id, item['Item'], item['Qty'], match.iloc[0]['Unit'], match.iloc[0]['Category'], cost, "Voice (Audio)"])
                                 else:
                                     sheet_logs.append_row([get_thai_time(), case_id, item['Item'], item['Qty'], "?", "General", 0, "Not Found"])
+                            
+                            st.success("✅ บันทึกเสียงเรียบร้อย!")
+                            # ใช้เวลาหน่วงนิดนึงให้คนเห็น Success ก่อน Rerun
+                            import time
+                            time.sleep(1)
                             st.rerun()
+                            
                         except Exception as e:
                             st.error(f"Error: {e}")
 
-            # --- TAB 2: SAFETY COUNT ---
             with tab2:
-                st.subheader("🛡️ Surgical Safety Count")
+                st.write("##### 🧽 Surgical Safety Count")
                 c1, c2 = st.columns(2)
-                gauze_val = c1.number_input("Gauze Count (ผ้ากอซ)", 0, 200, 10, key='g_cnt')
-                needle_val = c2.number_input("Needle Count (เข็ม)", 0, 100, 2, key='n_cnt')
+                gauze_val = c1.number_input("Gauze Count", 0, 200, 10, key='g_cnt')
+                needle_val = c2.number_input("Needle Count", 0, 100, 2, key='n_cnt')
                 
-                st.write("---")
-                if st.checkbox("✅ Confirm Safety Count (ยืนยันถูกต้อง)"):
-                    if st.button("Save Safety Record", type="primary"):
+                if st.checkbox("✅ Confirm Correctness"):
+                    if st.button("Save Count Record", type="primary"):
                         t = get_thai_time()
-                        sheet_logs.append_row([t, case_id, "Safety: Gauze Count", gauze_val, "piece", "Safety", 0, "Closing Count"])
-                        sheet_logs.append_row([t, case_id, "Safety: Needle Count", needle_val, "piece", "Safety", 0, "Closing Count"])
-                        st.success(f"บันทึกเรียบร้อย: Gauze={gauze_val}, Needles={needle_val}")
+                        sheet_logs.append_row([t, case_id, "Safety: Gauze", gauze_val, "pcs", "Safety", 0, "Correct"])
+                        sheet_logs.append_row([t, case_id, "Safety: Needles", needle_val, "pcs", "Safety", 0, "Correct"])
+                        st.success("Safety Recorded!")
                         st.rerun()
 
             with tab3:
+                st.write("##### ⏱️ Critical Time Stamps")
                 ct1, ct2, ct3 = st.columns(3)
-                if ct1.button("Patients In"):
+                if ct1.button("Patient In"):
                     t = get_thai_time()
                     sheet_logs.append_row([t, case_id, "Patient In", 1, "Time", "Workflow", 0, ""])
                     st.toast(f"Patient In: {t}")
+                    st.rerun()
                 if ct2.button("🔪 Incision"):
                     t = get_thai_time()
                     sheet_logs.append_row([t, case_id, "Incision", 1, "Time", "Workflow", 0, ""])
                     st.toast(f"Incision: {t}")
+                    st.rerun()
                 if ct3.button("Close Skin"):
                     t = get_thai_time()
                     sheet_logs.append_row([t, case_id, "Close Skin", 1, "Time", "Workflow", 0, ""])
                     st.toast(f"Finished: {t}")
+                    st.rerun()
 
             # Live Logs
-            st.markdown("### 📝 Live Logs")
+            st.markdown("### 📝 3. Live Logs (บันทึกล่าสุด)")
             logs = sheet_logs.get_all_records()
             if logs:
                 df_l = pd.DataFrame(logs)
@@ -173,7 +196,7 @@ if sh:
 
         # === RIGHT: DASHBOARD ===
         with col2:
-            st.subheader("📊 Live Analytics")
+            st.subheader("📊 4. Analytics")
             if logs:
                 df_all = pd.DataFrame(logs)
                 df_all['Total_Cost'] = pd.to_numeric(df_all['Total_Cost'], errors='coerce').fillna(0)
@@ -183,11 +206,11 @@ if sh:
                 items = len(df_case)
                 
                 m1, m2 = st.columns(2)
-                m1.metric("Total Cost", f"฿{total:,.0f}", delta="Real-time")
-                m2.metric("Items Used", f"{items} pcs")
+                m1.metric("Total Cost", f"฿{total:,.0f}")
+                m2.metric("Items Used", f"{items}")
                 
                 if not df_case.empty:
-                    fig = px.pie(df_case, values='Total_Cost', names='Category', hole=0.6, title="Cost Breakdown")
+                    fig = px.pie(df_case, values='Total_Cost', names='Category', hole=0.6, title="Cost Structure")
                     fig.update_layout(showlegend=False, margin=dict(t=30, b=0, l=0, r=0), height=250)
                     st.plotly_chart(fig, use_container_width=True)
             
