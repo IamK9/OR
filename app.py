@@ -65,8 +65,6 @@ with st.sidebar:
     st.subheader("📋 Case Info")
     case_id = st.text_input("Case ID", default_case)
     doctor_name = st.selectbox("Surgeon", ["ศ.นพ.สมชาย (General)", "รศ.พญ.วิภา (OB-GYN)", "ผศ.นพ.มานพ (Ortho)"])
-    
-    # แก้ไขจุดที่มักเกิด Error บ่อย: เขียนให้อยู่บรรทัดเดียวกันชัดเจน
     procedure = st.text_input("Procedure", "Laparoscopic Appendectomy")
     
     st.markdown("---")
@@ -112,4 +110,101 @@ if sh:
                     with st.status("🔄 AI Processing & Inventory Matching..."):
                         try:
                             inv_list = ", ".join(df_inv['Item_Name'].tolist()) if not df_inv.empty else ""
-                            prompt_extract = f"จากข้อความ: '{user_input}'. สกัด Item และ Qty แมตช์กับ: [{inv_list}]. ตอบ JSON Array: [{{'Item':'..', 'Qty':..
+                            # ใช้ Triple Quotes เพื่อป้องกัน Error เวลาข้อความยาวเกินบรรทัด
+                            prompt_extract = f"""
+                            จากข้อความ: '{user_input}'
+                            สกัด Item และ Qty แมตช์กับรายการในคลังนี้: [{inv_list}]
+                            ตอบ JSON Array เท่านั้น: [{{'Item':'..', 'Qty':..}}]
+                            """
+                            res = model.generate_content(prompt_extract)
+                            items = json.loads(res.text.strip().replace("```json", "").replace("```", ""))
+                            
+                            for item in items:
+                                match = df_inv[df_inv['Item_Name'] == item.get('Item')]
+                                if not match.empty:
+                                    idx = match.index[0] + 2
+                                    sheet_inv.update_cell(idx, 4, float(match.iloc[0]['Stock_Qty']) - float(item['Qty']))
+                                    cost = float(match.iloc[0]['Price']) * float(item['Qty'])
+                                    sheet_logs.append_row([get_thai_time(), case_id, item['Item'], item['Qty'], match.iloc[0]['Unit'], match.iloc[0]['Category'], cost, "Voice"])
+                                else:
+                                    sheet_logs.append_row([get_thai_time(), case_id, item['Item'], item['Qty'], "?", "General", 0, "Not Found"])
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error: {e}")
+
+            # --- TAB 2: SAFETY COUNT ---
+            with tab2:
+                st.subheader("🛡️ Surgical Safety Count")
+                c1, c2 = st.columns(2)
+                gauze_val = c1.number_input("Gauze Count (ผ้ากอซ)", 0, 200, 10, key='g_cnt')
+                needle_val = c2.number_input("Needle Count (เข็ม)", 0, 100, 2, key='n_cnt')
+                
+                st.write("---")
+                if st.checkbox("✅ Confirm Safety Count (ยืนยันถูกต้อง)"):
+                    if st.button("Save Safety Record", type="primary"):
+                        t = get_thai_time()
+                        sheet_logs.append_row([t, case_id, "Safety: Gauze Count", gauze_val, "piece", "Safety", 0, "Closing Count"])
+                        sheet_logs.append_row([t, case_id, "Safety: Needle Count", needle_val, "piece", "Safety", 0, "Closing Count"])
+                        st.success(f"บันทึกเรียบร้อย: Gauze={gauze_val}, Needles={needle_val}")
+                        st.rerun()
+
+            with tab3:
+                ct1, ct2, ct3 = st.columns(3)
+                if ct1.button("Patients In"):
+                    t = get_thai_time()
+                    sheet_logs.append_row([t, case_id, "Patient In", 1, "Time", "Workflow", 0, ""])
+                    st.toast(f"Patient In: {t}")
+                if ct2.button("🔪 Incision"):
+                    t = get_thai_time()
+                    sheet_logs.append_row([t, case_id, "Incision", 1, "Time", "Workflow", 0, ""])
+                    st.toast(f"Incision: {t}")
+                if ct3.button("Close Skin"):
+                    t = get_thai_time()
+                    sheet_logs.append_row([t, case_id, "Close Skin", 1, "Time", "Workflow", 0, ""])
+                    st.toast(f"Finished: {t}")
+
+            # Live Logs
+            st.markdown("### 📝 Live Logs")
+            logs = sheet_logs.get_all_records()
+            if logs:
+                df_l = pd.DataFrame(logs)
+                df_show = df_l[df_l['Case_ID'] == case_id].tail(8).iloc[::-1]
+                st.dataframe(df_show[['Timestamp', 'Item', 'Qty', 'Total_Cost']], use_container_width=True, hide_index=True)
+
+        # === RIGHT: DASHBOARD ===
+        with col2:
+            st.subheader("📊 Live Analytics")
+            if logs:
+                df_all = pd.DataFrame(logs)
+                df_all['Total_Cost'] = pd.to_numeric(df_all['Total_Cost'], errors='coerce').fillna(0)
+                df_case = df_all[df_all['Case_ID'] == case_id]
+                
+                total = df_case['Total_Cost'].sum()
+                items = len(df_case)
+                
+                m1, m2 = st.columns(2)
+                m1.metric("Total Cost", f"฿{total:,.0f}", delta="Real-time")
+                m2.metric("Items Used", f"{items} pcs")
+                
+                if not df_case.empty:
+                    fig = px.pie(df_case, values='Total_Cost', names='Category', hole=0.6, title="Cost Breakdown")
+                    fig.update_layout(showlegend=False, margin=dict(t=30, b=0, l=0, r=0), height=250)
+                    st.plotly_chart(fig, use_container_width=True)
+            
+            st.markdown("---")
+            if st.button("🏁 End Case & Auto-Code", type="primary"):
+                with st.status("🚀 AI Generating Summary..."):
+                    summary = f"Case: {case_id}, Procedure: {procedure}\nItems: {len(df_case)} items used."
+                    prompt = f"Summarize case: {summary}. Provide ICD-10, ICD-9-CM & Billing Note."
+                    try:
+                        res = model.generate_content(prompt)
+                        st.markdown(res.text)
+                        st.balloons()
+                    except:
+                        st.error("AI Error")
+
+    except Exception as e:
+        st.error(f"System Error: {e}")
+
+else:
+    st.stop()
