@@ -5,15 +5,15 @@ import gspread
 from google.oauth2.service_account import Credentials
 import google.generativeai as genai
 import json
+from datetime import datetime
 
-# --- 1. ตั้งค่าหน้าจอ (UI Configuration) ---
+# --- 1. UI Configuration ---
 st.set_page_config(page_title="Smart OR App", layout="wide", page_icon="🏥")
 
-# ตกแต่ง CSS
 st.markdown("""
     <style>
-    .main { background-color: #f5f7f9; }
-    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    .main { background-color: #f8f9fa; }
+    .stDataFrame { background-color: white; border-radius: 10px; padding: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -21,7 +21,7 @@ st.title("🏥 Smart OR: Technology & Innovation")
 st.markdown("##### ระบบติดตามผล วิเคราะห์ และช่วยตัดสินใจในงานห้องผ่าตัด")
 st.divider()
 
-# --- 2. การเชื่อมต่อข้อมูล (Authentication & Connectivity) ---
+# --- 2. Connection Setup ---
 scope = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive"
@@ -32,112 +32,155 @@ def init_connection():
     try:
         service_info = dict(st.secrets["gcp_service_account"])
         service_info["private_key"] = service_info["private_key"].replace("\\n", "\n")
-        
         creds = Credentials.from_service_account_info(service_info, scopes=scope)
         client = gspread.authorize(creds)
-        
-        # เปิดไฟล์ Google Sheet
-        sh = client.open("Smart_OR_Database") 
-        return sh
+        return client.open("Smart_OR_Database")
     except Exception as e:
-        st.error(f"❌ ไม่สามารถเชื่อมต่อฐานข้อมูลได้: {e}")
+        st.error(f"❌ Connection Error: {e}")
         return None
 
 sh = init_connection()
 
-# ตั้งค่า Gemini 2.0 Flash
 if "GEMINI_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     model = genai.GenerativeModel('gemini-2.0-flash')
-else:
-    st.warning("⚠️ ไม่พบ GEMINI_API_KEY ใน Secrets")
 
-# --- 3. ส่วนควบคุมด้านข้าง (Decision Making - Sidebar) ---
+# --- 3. Sidebar (Setup) ---
 st.sidebar.header("📋 Case Setup")
-doctor_name = st.sidebar.selectbox("เลือกศัลยแพทย์", ["นพ.สมชาย", "พญ.วิภา", "นพ.มานพ"])
-procedure = st.sidebar.text_input("ชื่อหัตถการ", "Laparoscopic Appendectomy")
+case_id = st.sidebar.text_input("Case ID", f"CASE-{datetime.now().strftime('%Y%m%d-%H%M')}")
+doctor_name = st.sidebar.selectbox("ศัลยแพทย์", ["นพ.สมชาย", "พญ.วิภา", "นพ.มานพ"])
+procedure = st.sidebar.text_input("หัตถการ", "Laparoscopic Appendectomy")
 
-if st.sidebar.button("AI Predictive: แนะนำการเตรียมของ"):
-    with st.sidebar.status("Gemini กำลังวิเคราะห์ Data..."):
-        prompt = f"ในฐานะพยาบาลห้องผ่าตัดผู้เชี่ยวชาญ หมอ {doctor_name} กำลังจะทำ {procedure} ช่วยแนะนำรายการวัสดุสิ้นเปลืองที่ควรเตรียม (Pick List) พร้อมรหัส ICD-10 และ ICD-9-CM เบื้องต้น"
+if st.sidebar.button("AI Suggestion (แนะนำของ)"):
+    with st.sidebar.status("AI กำลังวิเคราะห์ Preference Card..."):
+        prompt = f"หมอ {doctor_name} ทำ {procedure} แนะนำวัสดุและยาที่ต้องเตรียม (Pick List) พร้อมรหัส ICD-10"
         try:
-            response = model.generate_content(prompt)
-            st.sidebar.info(response.text)
-        except Exception as e:
-            st.sidebar.error(f"AI Error: {e}")
+            res = model.generate_content(prompt)
+            st.sidebar.info(res.text)
+        except:
+            st.sidebar.error("AI ไม่ตอบสนอง")
 
-# --- 4. หน้าจอหลัก (Tracking & Analysis) ---
+# --- 4. Main App ---
 if sh:
     try:
         sheet_logs = sh.worksheet("Surgical_Logs")
+        sheet_inv = sh.worksheet("Inventory")
         
-        col1, col2 = st.columns([1, 1])
+        # โหลดข้อมูล Inventory มาเก็บไว้ใน Cache เพื่อความเร็วในการค้นหา
+        inv_data = sheet_inv.get_all_records()
+        df_inv = pd.DataFrame(inv_data)
+
+        col1, col2 = st.columns([1.2, 0.8])
 
         with col1:
-            st.header("🎙️ 1. Tracking (บันทึกข้อมูล)")
-            user_input = st.chat_input("พิมพ์หรือใช้ Voice-to-Text บันทึกข้อมูลที่นี่...")
+            st.header("🎙️ 1. Tracking (บันทึกข้อมูล & ตัดสต็อก)")
+            st.info(f"📍 กำลังบันทึกข้อมูลของ: **{case_id}**")
+            
+            # Input รับเสียง/ข้อความ
+            user_input = st.chat_input("สั่งการด้วยเสียงหรือพิมพ์ เช่น 'ใช้ Propofol 2 amp และ Gauze 5 ชิ้น'...")
             
             if user_input:
-                extracted_data = "[]"
-                with st.status("AI กำลังสกัดข้อมูลวัสดุ..."):
+                # 1. ให้ AI สกัดของและจำนวนออกมาเป็น JSON
+                with st.status("AI กำลังประมวลผลและตัดสต็อก..."):
                     try:
-                        prompt_extract = f"สกัดชื่อวัสดุและจำนวนจากข้อความนี้: '{user_input}' ให้เป็น JSON: [{{'item': '...', 'qty': ...}}]"
-                        res_extract = model.generate_content(prompt_extract)
-                        extracted_data = res_extract.text
+                        # Prompt ให้ AI แมตช์ของกับ Inventory
+                        inv_list = ", ".join(df_inv['Item_Name'].tolist()) if not df_inv.empty else ""
+                        prompt_extract = f"""
+                        จากข้อความ: '{user_input}' 
+                        ให้สกัดชื่อวัสดุ(Item) และจำนวน(Qty) โดยพยายามแมตช์กับรายการในคลังนี้: [{inv_list}]
+                        ตอบเป็น JSON Array เท่านั้น: [{{'Item': '...', 'Qty': ...}}]
+                        """
+                        res = model.generate_content(prompt_extract)
+                        extracted_items = json.loads(res.text.strip().replace("```json", "").replace("```", ""))
+                        
+                        # 2. วนลูปบันทึกทีละรายการ และตัดสต็อก
+                        for item in extracted_items:
+                            item_name = item.get('Item')
+                            qty_used = float(item.get('Qty', 0))
+                            
+                            # ค้นหาข้อมูลใน Inventory (ราคา, หน่วย, หมวดหมู่)
+                            match = df_inv[df_inv['Item_Name'] == item_name]
+                            
+                            if not match.empty:
+                                current_stock = float(match.iloc[0]['Stock_Qty'])
+                                price = float(match.iloc[0]['Price'])
+                                unit = match.iloc[0]['Unit']
+                                category = match.iloc[0]['Category']
+                                row_idx = match.index[0] + 2 # +2 เพราะ gspread เริ่มแถว 1 และมี header
+                                
+                                # คำนวณ
+                                new_stock = current_stock - qty_used
+                                total_cost = price * qty_used
+                                
+                                # อัปเดตสต็อกใน Sheet Inventory (เฉพาะ Cell ที่เปลี่ยน)
+                                sheet_inv.update_cell(row_idx, 4, new_stock) # สมมติ Stock อยู่คอลัมน์ 4
+                                
+                                # บันทึกลง Surgical_Logs
+                                log_row = [
+                                    datetime.now().strftime("%H:%M:%S"),
+                                    case_id,
+                                    item_name,
+                                    qty_used,
+                                    unit,
+                                    category,
+                                    total_cost
+                                ]
+                                sheet_logs.append_row(log_row)
+                            else:
+                                # กรณีไม่เจอในคลัง บันทึกแบบทั่วไป
+                                sheet_logs.append_row([datetime.now().strftime("%H:%M:%S"), case_id, item_name, qty_used, "unknown", "General", 0])
+
+                        st.success(f"บันทึกและตัดสต็อกเรียบร้อย: {user_input}")
+                        
                     except Exception as e:
-                        st.error(f"AI Process Error: {e}")
+                        st.error(f"เกิดข้อผิดพลาด: {e}")
+
+            # --- ส่วนแสดงตาราง Log เหมือน Smart Anesthesia ---
+            st.subheader("📋 Recent Logs (รายการล่าสุด)")
+            # ดึงข้อมูล Log ล่าสุดมาโชว์
+            logs_data = sheet_logs.get_all_records()
+            if logs_data:
+                df_logs = pd.DataFrame(logs_data)
+                # กรองดูเฉพาะ Case ปัจจุบัน
+                df_current_case = df_logs[df_logs['Case_ID'] == case_id].tail(10) # โชว์ 10 รายการล่าสุด
                 
-                st.write(f"**บันทึกสำเร็จ:** {user_input}")
-                # แสดง JSON แบบปลอดภัย
-                try:
-                    st.json(extracted_data)
-                except:
-                    st.text(extracted_data)
-                
-                # บันทึกลง Google Sheet
-                new_row = [pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"), doctor_name, procedure, user_input, 0, "AUTO-ID"]
-                sheet_logs.append_row(new_row)
-                st.success("อัปเดตข้อมูลลง Google Sheet เรียบร้อยแล้ว")
+                # จัดเรียงคอลัมน์ให้สวยงาม
+                if not df_current_case.empty:
+                    st.dataframe(
+                        df_current_case[['Timestamp', 'Item', 'Qty', 'Unit', 'Category', 'Total_Cost']],
+                        use_container_width=True,
+                        hide_index=True
+                    )
+            else:
+                st.info("ยังไม่มีรายการบันทึก")
 
         with col2:
             st.header("📊 2. Analysis (วิเคราะห์ผล)")
-            # ดึงข้อมูลมาทำ Dashboard
-            raw_data = sheet_logs.get_all_records()
-            if raw_data:
-                df = pd.DataFrame(raw_data)
+            
+            if logs_data:
+                df_all = pd.DataFrame(logs_data)
+                # แปลงข้อมูลตัวเลข
+                df_all['Total_Cost'] = pd.to_numeric(df_all['Total_Cost'], errors='coerce').fillna(0)
                 
-                # --- ส่วนที่แก้ไข: แปลงข้อมูลให้เป็นตัวเลข ---
-                if 'Total_Cost' in df.columns:
-                     # แปลงเป็นตัวเลข ถ้ามี error ให้เปลี่ยนเป็น 0
-                    df['Total_Cost'] = pd.to_numeric(df['Total_Cost'], errors='coerce').fillna(0)
+                # Metrics Dashboard
+                total_cost = df_all[df_all['Case_ID'] == case_id]['Total_Cost'].sum()
+                item_count = len(df_all[df_all['Case_ID'] == case_id])
                 
-                # แสดง Metrics
                 m1, m2 = st.columns(2)
-                m1.metric("จำนวนเคสทั้งหมด", f"{len(df)} เคส")
+                m1.metric("ยอดรวมเคสนี้ (บาท)", f"{total_cost:,.0f}")
+                m2.metric("จำนวนรายการ", f"{item_count}")
                 
-                total_cost_val = df['Total_Cost'].sum() if 'Total_Cost' in df.columns else 0
-                m2.metric("งบประมาณรวม (บาท)", f"{total_cost_val:,.0f}")
-                
-                # กราฟต้นทุน
-                if 'Total_Cost' in df.columns and 'Case_ID' in df.columns:
-                    fig = px.bar(df, x='Case_ID', y='Total_Cost', 
-                                 title="ต้นทุนจริงรายเคส (Actual Cost per Case)",
-                                 color='Total_Cost', color_continuous_scale='Viridis')
-                    st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("ยังไม่มีข้อมูลการผ่าตัดในระบบ")
+                # Chart
+                st.markdown("###### สัดส่วนค่าใช้จ่ายตามหมวดหมู่")
+                if 'Category' in df_all.columns:
+                    df_chart = df_all[df_all['Case_ID'] == case_id]
+                    if not df_chart.empty:
+                        fig = px.pie(df_chart, values='Total_Cost', names='Category', hole=0.4)
+                        fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=300)
+                        st.plotly_chart(fig, use_container_width=True)
 
     except Exception as e:
-        st.error(f"เกิดข้อผิดพลาดในการดึงข้อมูลแผ่นชีต: {e}")
-
-# --- 5. สรุปจบเคส (Wow Feature) ---
-st.divider()
-if st.button("🏁 จบการผ่าตัด: สรุปเคส & ลงรหัส ICD"):
-    with st.status("Gemini 2.0 Flash กำลังสร้างบทสรุปอัจฉริยะ..."):
-        try:
-            prompt_final = f"สรุปเคส {procedure} ของหมอ {doctor_name} ระบุรหัส ICD-10, ICD-9-CM และประเมินต้นทุนวัสดุเบื้องต้นในรูปแบบตาราง"
-            res_final = model.generate_content(prompt_final)
-            st.markdown(res_final.text)
-            st.balloons()
-        except Exception as e:
-            st.error(f"ไม่สามารถสรุปเคสได้: {e}")
+        st.error(f"Data Error: {e}")
+        st.warning("กรุณาตรวจสอบว่ามี Sheet ชื่อ 'Inventory' และ 'Surgical_Logs' และหัวตารางถูกต้อง")
+else:
+    st.stop()
