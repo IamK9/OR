@@ -64,7 +64,7 @@ with st.sidebar:
     
     st.subheader("📋 Case Info")
     case_id = st.text_input("Case ID", default_case)
-    doctor_name = st.selectbox("Surgeon", ["ศ.นพ.สมชาย (General)", "รศ.พญ.วิภา (OB-GYN)", "ผศ.นพ.มานพ (Ortho)"])
+    doctor_name = st.selectbox("Surgeon", ["นพ.สมชาย (General)", "พญ.วิภา (OB-GYN)", "นพ.มานพ (Ortho)"])
     procedure = st.text_input("Procedure", "Laparoscopic Appendectomy")
     
     st.markdown("---")
