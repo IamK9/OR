@@ -53,7 +53,7 @@ model = genai.GenerativeModel('gemini-2.0-flash')
 
 # --- 3. ส่วนควบคุมด้านข้าง (Decision Making - Sidebar) ---
 st.sidebar.header("📋 Case Setup")
-doctor_name = st.sidebar.selectbox("เลือกศัลยแพทย์", ["นพ.สมชาย", "พญ.วิภา", "นพ.มานพ"])
+doctor_name = st.sidebar.selectbox("เลือกแพทย์", ["นพ.สมชาย", "พญ.วิภา", "นพ.มานพ"])
 procedure = st.sidebar.text_input("ชื่อหัตถการ", "Laparoscopic Appendectomy")
 
 if st.sidebar.button("AI Predictive: แนะนำการเตรียมของ"):
@@ -87,7 +87,7 @@ if sh:
                 sheet_logs.append_row(new_row)
                 st.success("อัปเดตข้อมูลลง Google Sheet เรียบร้อยแล้ว")
 
-      with col2:
+          with col2:
             st.header("📊 2. Analysis (วิเคราะห์ผล)")
             # ดึงข้อมูลมาทำ Dashboard
             raw_data = sheet_logs.get_all_records()
